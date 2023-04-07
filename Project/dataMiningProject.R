@@ -15,6 +15,7 @@ library(data.table)
 library(ggplot2)
 library("viridisLite")
 library("viridis")
+library(corrplot)
 
 # ******** EDA *************** #
 my_data <- read.csv("Data/application_record.csv")
@@ -23,6 +24,8 @@ credits <- read.csv("Data/credit_record.csv")
 # shape
 dim(my_data) # (438557, 18)
 dim(credits) # (1048575, 3)
+colnames(my_data)
+colnames(credits)
 
 # comments : we see that the datasets have different shapes
 
@@ -33,6 +36,70 @@ summary(credits)
 # unique values
 length(unique(my_data$ID)) # 438510 unique values
 length(unique(credits$ID)) # 45985 unique values
+
+# let's explore application_record dataset
+unique(my_data$FLAG_OWN_CAR) # ["Y" "N"]
+unique(my_data$FLAG_OWN_REALTY) # ["Y" "N"]
+unique(my_data$NAME_INCOME_TYPE) #  ["Working","Commercial associate","Pensioner","State servant","Student"]
+unique(my_data$NAME_EDUCATION_TYPE) # ["Higher education", "Secondary / secondary special", "Incomplete higher", "Lower secondary", "Academic degree"]
+unique(my_data$NAME_FAMILY_STATUS) # ["Civil marriage","Married", "Single / not married", "Separated", "Widow" ]
+unique(my_data$NAME_HOUSING_TYPE) # ["Rented apartment", "House / apartment", "Municipal apartment", "With parents", "Co-op apartment", "Office apartment"]
+unique(my_data$OCCUPATION_TYPE)
+# ["", "Security staff", "Sales staff", "Accountants""Laborers" , "Managers", "Drivers", "Core staff", "High skill tech staff", "Cleaning staff", "Private service staff", 
+# "Cooking staff", "Low-skill Laborers", "Medicine staff", "Secretaries", "Waiters/barmen staff", "HR staff", "Realty agents", "IT staff"]
+
+# missing values ? 
+sapply(my_data, function(x) sum(is.na(x))) # we don't have any missing value
+
+# correlation
+correl = cor(my_data2[c(5,6,12,18)])
+x11(width = 10, height = 10)
+corrplot(correl, order='hclust', addrect=2, method="number")
+
+# this corrplot shows there is a strong correlation between the number of children and 
+# the number of members in the family
+# right now, this information isn't really meaning for our goal
+
+# ********** Clustering ************* 
+
+# Our first goal is to analyze good and bad clients
+# The first question is : is there any cluster ? 
+# As so, let's perform clustering on application 
+
+my_data2 <- data.frame(my_data)
+
+# 1. Z-normalization
+for (i in c(5, 6, 12, 18)){
+  i.mean <- sapply(my_data2[i], mean)
+  i.std <- sapply(my_data2[i], sd)
+  my_data2[i] <- (my_data2[i] - i.mean) / i.std 
+}
+
+summary(my_data2)
+
+for (i in 1:5){
+  clf <- kmeans(my_data2[c(5,6,12,18)], 2)
+  print(clf)
+  plot(my_data2[c(5,6)], col=clf$cluster)
+}
+plot(my_data2[c(5,6)], col=clf$cluster)
+plot(my_data2[c(5,12)], col=clf$cluster)
+plot(my_data2[c(6,12)], col=clf$cluster)
+
+# we tried to project the clusters on different axes to get the meaning of the clusters
+# and it's still confused
+
+# let's try with 3 clusters
+for (i in 1:5){
+  clf <- kmeans(my_data2[c(5,6,12,18)], 3)
+  print(clf)
+  plot(my_data2[c(5,6)], col=clf$cluster)
+}
+
+# it's still confused
+# we see that we can't reach our goal just by using the application data set.
+# now let's make use of credits data set
+
 
 # intersection between the two datasets
 length(dplyr::intersect(my_data$ID, credits$ID)) # 36457 common values
@@ -114,7 +181,10 @@ credits$month_on_book <- credits$MONTHS_BALANCE - credits$opening_month
 
 # ordering
 setorder(as.data.table(credits), ID, month_on_book)
-credits[1:30,]
+credits[200:290,]
+
+
+# _______________________________________________________________________________________________________________________________________________________________________________
 
 # 7. compute the denominator
 # count how many users opened the account on each month

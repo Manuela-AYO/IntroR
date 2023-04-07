@@ -7,6 +7,8 @@
 # *** That's the reason why banks use vintage analysis which
 # *** aims to observe the behavior of a client on a time
 
+# https://statisticsglobe.com/barplot-in-r
+
 # ********* Libraries ******** #
 library(magrittr)
 library("tidyr")
@@ -16,6 +18,8 @@ library(ggplot2)
 library("viridisLite")
 library("viridis")
 library(corrplot)
+library(ggplot2)
+library(rpart)
 
 # ******** EDA *************** #
 my_data <- read.csv("Data/application_record.csv")
@@ -68,7 +72,7 @@ corrplot(correl, order='hclust', addrect=2, method="number")
 
 my_data2 <- data.frame(my_data)
 
-# 1. Z-normalization
+# Z-normalization
 for (i in c(5, 6, 12, 18)){
   i.mean <- sapply(my_data2[i], mean)
   i.std <- sapply(my_data2[i], sd)
@@ -82,6 +86,7 @@ for (i in 1:5){
   print(clf)
   plot(my_data2[c(5,6)], col=clf$cluster)
 }
+
 plot(my_data2[c(5,6)], col=clf$cluster)
 plot(my_data2[c(5,12)], col=clf$cluster)
 plot(my_data2[c(6,12)], col=clf$cluster)
@@ -100,12 +105,28 @@ for (i in 1:5){
 # we see that we can't reach our goal just by using the application data set.
 # now let's make use of credits data set
 
+# **************** "Good" and "bad" clients *************
+
+# we consider as good clients, clients who have less than 1 month overdue
 
 # intersection between the two datasets
 length(dplyr::intersect(my_data$ID, credits$ID)) # 36457 common values
 
-# group the data by credit
-credit_grouped <- credits %>% dplyr::group_by(ID)
+# exploration
+colnames(credits)
+
+# get the intersection 
+temp <- dplyr::intersect(my_data$ID, credits$ID)
+temp %>% head(10)
+intersect <- credits[credits$ID %in% temp,]
+intersect %>% head(30)
+dim(intersect)
+length(unique(intersect$ID))
+
+# we'll work on those rows
+
+# group the data by ID
+credit_grouped <- intersect %>% dplyr::group_by(ID)
 credit_grouped %>% head(10)
 
 # ********* On this part, our goal is to look at the evolution
@@ -113,25 +134,23 @@ credit_grouped %>% head(10)
 
 # 1. create a wide version of credits dataframe
 # this will help us to see the status of the account along the time
-pivot <- spread(credits, key="MONTHS_BALANCE",
+pivot <- spread(intersect, key="MONTHS_BALANCE",
                 value="STATUS")
 head(pivot)
 
+# we want to get 
 # smallest value of MONTHS_BALANCE is the month the account was created
 granted <- credit_grouped %>% summarise(MONTHS_BALANCE = min(MONTHS_BALANCE))
-pivot$begin_months <- granted$MONTHS_BALANCE
-pivot$begin_months
+pivot$opening_months <- granted$MONTHS_BALANCE
+pivot$opening_months
 
 # biggest value of MONTHS_BALANCE is how long the account has been created
 # till we get the data
 end <- credit_grouped %>% summarise(MONTHS_BALANCE = max(MONTHS_BALANCE))
 pivot$end_month <- end$MONTHS_BALANCE
 pivot$end_month
-pivot[1:30,]
+pivot %>% head(10)
 
-colnames(pivot)
-
-pivot <- pivot %>% rename_at('begin_months', ~'opening_month')
 colnames(pivot)
 
 # 2. focus on just the evolution of the account
@@ -139,7 +158,7 @@ colnames(pivot)
 # data.table are faster than simple data.frame
 table_window <- data.table(
   ID = pivot$ID,
-  opening_month = pivot$opening_month,
+  opening_month = pivot$opening_months,
   end_month = pivot$end_month
 )
 
@@ -147,42 +166,129 @@ dim(table_window)
 
 head(table_window)
 
+# number of closed accounts
+dim(table_window[table_window$end_month != 0])
+
 # 3. create the window : it's the number of months since the account has been opened
 table_window$window <- table_window$end_month - table_window$opening_month
 head(table_window)
 
-credits <- left_join(credits, table_window, by="ID")
-colnames(credits)
-head(credits, 30)
+intersect <- left_join(intersect, table_window, by="ID")
+colnames(intersect)
+head(intersect, 30)
 
 # ***** now let's go ahead
 
-# first save the credits data table because we will perform a series of operations
-credits_save <- copy(credits)
-head(credits_save)
+# first save the credits data table because we will perform series of operations
+intersect_save <- copy(intersect)
+head(intersect_save)
 
 # 4. delete users whose observe window less than 20(new clients)
 # we consider we don't have enough info to know if they are great clients or not
-dim(credits)
-credits <- credits[credits$window > 20,]
-dim(credits)
-unique(credits$STATUS)
+# dim(credits)
+# credits <- credits[credits$window > 20,]
+# dim(credits)
+# unique(credits$STATUS)
 
-# 5. we're going to analyze more than 60 days past due
-# set to 1 cards with > 60 days past due and 0 else
-credits$STATUS <- ifelse((credits$STATUS == 2 | credits$STATUS == 3 | credits$STATUS == 4
-| credits$STATUS == 5), 1, 0)
-unique(credits$STATUS)
+# 5. we're in the head of a financial institution
+# and we want to minimize overdues
+# so we're going to analyze more than 30 days(1 month) past due
+
+# set to 1 cards with >= 30 days past due and 0 else
+intersect$STATUS <- ifelse((intersect$STATUS == 1 | intersect$STATUS == 2 | intersect$STATUS == 3 | intersect$STATUS == 4
+| intersect$STATUS == 5), 1, 0)
+unique(intersect$STATUS)
 
 # 6. compute month on book : elapsed time between the opening month and the month balance
-# with this column, we'll make conclusions like "10 days after the acquisition of his card,
+# with this column, we'll make conclusions like "10 months after the opening of his account,
 # his status was X"
-credits$month_on_book <- credits$MONTHS_BALANCE - credits$opening_month
+intersect$month_on_book <- intersect$MONTHS_BALANCE - intersect$opening_month
 
 # ordering
-setorder(as.data.table(credits), ID, month_on_book)
-credits[200:290,]
+setorder(as.data.table(intersect), ID, month_on_book)
+intersect %>% head(10)
 
+# **************** Analysis : what make them different ? ******************* 
+
+# create a new data set which contains intersect's info columns and its correspondent rows in application
+appli_inter <- left_join(intersect, my_data2, by="ID")
+appli_inter %>% head(20)
+
+# let's delete some useless columns(flag_mobile, flag_phone, flag_*)
+appli_inter <- subset(appli_inter, select = -c(22, 21, 20, 19))
+
+temp <- dplyr::distinct(appli_inter, ID, STATUS)
+
+# no debt clients
+dim(temp[temp$STATUS == 0,]) # (36456, 2)
+
+# debt clients
+dim(temp[temp$STATUS == 1,]) # (4291, 2)
+
+# visualization of the amount of each class
+status <- c("No Debt", "Debt")
+status
+values <- c(dim(temp[temp$STATUS == 0,])[1], dim(temp[temp$STATUS == 1,])[1])
+values
+sm_df <- data.frame(status, values)
+sm_df
+viz <- ggplot(sm_df, aes(y=values, x=status, fill=status)) + geom_bar(stat="identity")
+viz
+# ** comments : the data set is imbalanced but we still have more than 4000 data to analyze debt clients
+
+# we want to understand what make some clients better on their finance management than others
+
+# 1. first let us see if clustering is better on those data
+ncol(appli_inter)
+head(appli_inter)
+
+sapply(appli_inter, function(x) sum(is.na(x)))
+
+for (i in 1:5){
+  clf <- kmeans(appli_inter[c(11,12,18,20)], 2)
+  print(clf)
+  plot(appli_inter[c(3,12)], col=clf$cluster)
+}
+
+# the clustering is still mixed
+
+# 2. Decision tree
+# Decision Trees are white-box in machine learning
+# We'll build a decision tree to have a first intuition of how
+# we should go
+
+appli_inter2 <- subset(appli_inter, select = -c(2,4,5,6,7))
+colnames(appli_inter2)
+appli_inter2 <- dplyr::distinct(appli_inter2)
+head(appli_inter2, 50)
+
+# we observe that there are duplicates in the data
+# and we'll delete them because they are a huge source of bias
+temp3 <- appli_inter2[!duplicated(appli_inter2), ]
+nrow(appli_inter2)
+nrow(temp3)
+set.seed(2568)
+n <- nrow(appli_inter) # number of rows
+print(n)
+train <- sort(sample(1:n, floor(n/2)))
+iris.train <- iris[train,]
+dim(iris.train)
+head(iris.train)
+iris.test <- iris[-train, ]
+head(iris.test)
+dim(iris.test)
+head(iris)
+
+# decision tree on the learning set
+iris.rp <- rpart(class ~ .,
+                 data = iris[1:4],
+                 subset = train,
+                 method = "class", # class method is used for classification 
+                 parms = list(split = "information"),
+                 maxsurrogate = 0,
+                 cp = 0,
+                 minsplit = 5, # minimum number of data to split
+                 minbucket = 2) # minimum number of observations in any terminal node
 
 # _______________________________________________________________________________________________________________________________________________________________________________
 

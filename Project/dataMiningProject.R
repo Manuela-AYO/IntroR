@@ -252,11 +252,7 @@ for (i in 1:5){
 
 # the clustering is still mixed
 
-# 2. Decision tree
-# Decision Trees are white-box in machine learning
-# We'll build a decision tree to have a first intuition of how
-# we should go
-
+# let us take a look again to our data
 appli_inter2 <- subset(appli_inter, select = -c(2,4,5,6,7))
 colnames(appli_inter2)
 appli_inter2 <- dplyr::distinct(appli_inter2)
@@ -264,24 +260,39 @@ head(appli_inter2, 50)
 
 # we observe that there are duplicates in the data
 # and we'll delete them because they are a huge source of bias
-temp3 <- appli_inter2[!duplicated(appli_inter2), ]
-nrow(appli_inter2)
-nrow(temp3)
+appli_inter2 <- appli_inter2[!duplicated(appli_inter2$ID), ]
+values <- c(dim(appli_inter2[appli_inter2$STATUS == 0,])[1], dim(appli_inter2[appli_inter2$STATUS == 1,])[1])
+values
+sm_df <- data.frame(status, values)
+sm_df
+viz <- ggplot(sm_df, aes(y=values, x=status, fill=status)) + geom_bar(stat="identity")
+viz
+
+# now the data set is really imbalanced
+
+# 2. Decision tree
+# Decision Trees are white-box in machine learning
+# We'll build a decision tree to have a first intuition of how
+# we should go
+# Also, decision tree well handle imbalanced dataset
+
+n <- nrow(appli_inter2)
 set.seed(2568)
-n <- nrow(appli_inter) # number of rows
-print(n)
 train <- sort(sample(1:n, floor(n/2)))
-iris.train <- iris[train,]
-dim(iris.train)
-head(iris.train)
-iris.test <- iris[-train, ]
-head(iris.test)
-dim(iris.test)
-head(iris)
+appli_inter2.train <- appli_inter2[train, -c(1,2)]
+dim(appli_inter2.train)
+head(appli_inter2.train)
+appli_inter2.test <- appli_inter2[-train, -c(1,2)]
+head(appli_inter2.test)
+dim(appli_inter2.test)
+head(appli_inter2.test)
+print(dim(appli_inter2.train[appli_inter2.train$STATUS == 1, ]))
 
 # decision tree on the learning set
-iris.rp <- rpart(class ~ .,
-                 data = iris[1:4],
+help(rpart)
+class <- as.matrix(appli_inter2[2])
+appli_inter2.rp <- rpart(class ~ .,
+                 data = appli_inter2[c(3,4,5,14,6)],
                  subset = train,
                  method = "class", # class method is used for classification 
                  parms = list(split = "information"),
@@ -289,6 +300,17 @@ iris.rp <- rpart(class ~ .,
                  cp = 0,
                  minsplit = 5, # minimum number of data to split
                  minbucket = 2) # minimum number of observations in any terminal node
+
+X11(width=10, height = 10)
+plot(appli_inter2.rp,
+     uniform = TRUE,
+     compress = TRUE,
+     margin = .2)
+text(appli_inter2.rp,
+     use.n = TRUE,
+     all = TRUE,
+     fancy = TRUE)
+colnames(appli_inter2)
 
 # _______________________________________________________________________________________________________________________________________________________________________________
 

@@ -1,13 +1,11 @@
-# *** This project is all about classification of credit card 
-# *** applicant : is an applicant good or bad ? In other means, 
-# *** is it risky or not to provide an applicant a credit card ?
-# *** The particularity of this classification task is that 
-# *** we don't have the target class because there is not 
-# *** a criteria to predict whether an applicant is good or bad
-# *** That's the reason why banks use vintage analysis which
-# *** aims to observe the behavior of a client on a time
+# **** DO WE HAVE A NEW NICHE FOR A FINTECH ? ***
+# On this project, we'll explore how do "low" social category
+# people manage their finances.
+# And maybe, we'll find a business opportunity
 
 # https://statisticsglobe.com/barplot-in-r
+# https://www.geeksforgeeks.org/random-forest-approach-for-classification-in-r-programming/
+# https://www.rdocumentation.org/packages/randomForest/versions/4.7-1.1/topics/randomForest
 
 # ********* Libraries ******** #
 library(magrittr)
@@ -20,8 +18,16 @@ library("viridis")
 library(corrplot)
 library(ggplot2)
 library(rpart)
+library(fastDummies)
+library(randomForest)
+library(snow)
+library(snowfall)
+library(Hmisc)
+library(lattice)
+library(caret)
+library(doParallel)
 
-# ******** EDA *************** #
+# ******** DATA EXPLORATION *************** #
 my_data <- read.csv("Data/application_record.csv")
 credits <- read.csv("Data/credit_record.csv")
 
@@ -52,60 +58,63 @@ unique(my_data$OCCUPATION_TYPE)
 # ["", "Security staff", "Sales staff", "Accountants""Laborers" , "Managers", "Drivers", "Core staff", "High skill tech staff", "Cleaning staff", "Private service staff", 
 # "Cooking staff", "Low-skill Laborers", "Medicine staff", "Secretaries", "Waiters/barmen staff", "HR staff", "Realty agents", "IT staff"]
 
+unique(my_data$OCCUPATION_TYPE)
+unique(my_data$NAME_EDUCATION_TYPE)
+unique(my_data$NAME_INCOME_TYPE)
+my_data[my_data$NAME_INCOME_TYPE == "Student",]
+
 # missing values ? 
 sapply(my_data, function(x) sum(is.na(x))) # we don't have any missing value
 
 # correlation
-correl = cor(my_data2[c(5,6,12,18)])
+correl = cor(my_data[c(5,6,12,18)])
 x11(width = 10, height = 10)
 corrplot(correl, order='hclust', addrect=2, method="number")
 
 # this corrplot shows there is a strong correlation between the number of children and 
 # the number of members in the family
-# right now, this information isn't really meaning for our goal
+# right now, this information isn't really meaningful for our goal
 
-# ********** Clustering ************* 
+# ********** Clustering ************* #
 
 # Our first goal is to analyze good and bad clients
 # The first question is : is there any cluster ? 
 # As so, let's perform clustering on application 
 
-my_data2 <- data.frame(my_data)
-
 # Z-normalization
 for (i in c(5, 6, 12, 18)){
-  i.mean <- sapply(my_data2[i], mean)
-  i.std <- sapply(my_data2[i], sd)
-  my_data2[i] <- (my_data2[i] - i.mean) / i.std 
+  i.mean <- sapply(my_data[i], mean)
+  i.std <- sapply(my_data[i], sd)
+  my_data[i] <- (my_data[i] - i.mean) / i.std 
 }
 
-summary(my_data2)
+summary(my_data)
 
 for (i in 1:5){
-  clf <- kmeans(my_data2[c(5,6,12,18)], 2)
+  clf <- kmeans(my_data[c(5,6,12,18)], 2)
   print(clf)
-  plot(my_data2[c(5,6)], col=clf$cluster)
+  plot(my_data[c(5,6)], col=clf$cluster)
 }
 
-plot(my_data2[c(5,6)], col=clf$cluster)
-plot(my_data2[c(5,12)], col=clf$cluster)
-plot(my_data2[c(6,12)], col=clf$cluster)
+plot(my_data[c(5,6)], col=clf$cluster)
+plot(my_data[c(5,12)], col=clf$cluster)
+plot(my_data[c(6,12)], col=clf$cluster)
 
 # we tried to project the clusters on different axes to get the meaning of the clusters
 # and it's still confused
 
 # let's try with 3 clusters
 for (i in 1:5){
-  clf <- kmeans(my_data2[c(5,6,12,18)], 3)
+  clf <- kmeans(my_data[c(5,6,12,18)], 3)
   print(clf)
-  plot(my_data2[c(5,6)], col=clf$cluster)
+  plot(my_data[c(5,6)], col=clf$cluster)
 }
 
 # it's still confused
 # we see that we can't reach our goal just by using the application data set.
 # now let's make use of credits data set
 
-# **************** "Good" and "bad" clients *************
+# **************** "Good" and "bad" clients ************* #
 
 # we consider as good clients, clients who have less than 1 month overdue
 
@@ -119,9 +128,18 @@ colnames(credits)
 temp <- dplyr::intersect(my_data$ID, credits$ID)
 temp %>% head(10)
 intersect <- credits[credits$ID %in% temp,]
-intersect %>% head(30)
-dim(intersect)
-length(unique(intersect$ID))
+intersect %>% head(100)
+dim(intersect[intersect$STATUS !=0, ])
+dim(intersect[intersect$STATUS !=1, ])
+
+# we're in the shoes of a business person
+# and we want to minimize lose/overdues
+# As so, bad clients are those who have more than 30 days overdue
+
+# set to 1 cards with >= 30 days past due and 0 else
+intersect$STATUS <- ifelse((intersect$STATUS == 1 | intersect$STATUS == 2 | intersect$STATUS == 3 | intersect$STATUS == 4
+                            | intersect$STATUS == 5), 1, 0)
+unique(intersect$STATUS)
 
 # we'll work on those rows
 
@@ -137,19 +155,27 @@ credit_grouped %>% head(10)
 pivot <- spread(intersect, key="MONTHS_BALANCE",
                 value="STATUS")
 head(pivot)
+dim(pivot)
 
-# we want to get 
-# smallest value of MONTHS_BALANCE is the month the account was created
+# we want to get smallest value of MONTHS_BALANCE which is the month the account was created
 granted <- credit_grouped %>% summarise(MONTHS_BALANCE = min(MONTHS_BALANCE))
 pivot$opening_months <- granted$MONTHS_BALANCE
 pivot$opening_months
 
-# biggest value of MONTHS_BALANCE is how long the account has been created
-# till we get the data
+# biggest value of MONTHS_BALANCE is how long the account has been created till we get the data
 end <- credit_grouped %>% summarise(MONTHS_BALANCE = max(MONTHS_BALANCE))
 pivot$end_month <- end$MONTHS_BALANCE
 pivot$end_month
 pivot %>% head(10)
+
+zero <- credit_grouped %>% summarise(nb_zeros = sum(STATUS == 0))
+zero
+
+ones <- credit_grouped %>% summarise(nb_ones = sum(STATUS == 1))
+ones
+
+pivot$nb_zeros <- zero$nb_zeros
+pivot$nb_ones <- ones$nb_ones
 
 colnames(pivot)
 
@@ -159,7 +185,9 @@ colnames(pivot)
 table_window <- data.table(
   ID = pivot$ID,
   opening_month = pivot$opening_months,
-  end_month = pivot$end_month
+  end_month = pivot$end_month,
+  nb_ones = pivot$nb_ones,
+  nb_zeros = pivot$nb_zeros
 )
 
 dim(table_window)
@@ -183,23 +211,7 @@ head(intersect, 30)
 intersect_save <- copy(intersect)
 head(intersect_save)
 
-# 4. delete users whose observe window less than 20(new clients)
-# we consider we don't have enough info to know if they are great clients or not
-# dim(credits)
-# credits <- credits[credits$window > 20,]
-# dim(credits)
-# unique(credits$STATUS)
-
-# 5. we're in the head of a financial institution
-# and we want to minimize overdues
-# so we're going to analyze more than 30 days(1 month) past due
-
-# set to 1 cards with >= 30 days past due and 0 else
-intersect$STATUS <- ifelse((intersect$STATUS == 1 | intersect$STATUS == 2 | intersect$STATUS == 3 | intersect$STATUS == 4
-| intersect$STATUS == 5), 1, 0)
-unique(intersect$STATUS)
-
-# 6. compute month on book : elapsed time between the opening month and the month balance
+# 4. compute month on book : elapsed time between the opening month and the month balance
 # with this column, we'll make conclusions like "10 months after the opening of his account,
 # his status was X"
 intersect$month_on_book <- intersect$MONTHS_BALANCE - intersect$opening_month
@@ -208,209 +220,187 @@ intersect$month_on_book <- intersect$MONTHS_BALANCE - intersect$opening_month
 setorder(as.data.table(intersect), ID, month_on_book)
 intersect %>% head(10)
 
-# **************** Analysis : what make them different ? ******************* 
+# **************** Analysis : what makes them different ? ******************* #
+
+# make sure not to have 2 values of STATUS for the same ID
+
+dim(intersect[intersect$STATUS !=0, ])
+dim(intersect[intersect$STATUS !=1, ])
 
 # create a new data set which contains intersect's info columns and its correspondent rows in application
-appli_inter <- left_join(intersect, my_data2, by="ID")
+appli_inter <- left_join(intersect, my_data, by="ID")
 appli_inter %>% head(20)
+colnames(appli_inter)
 
 # let's delete some useless columns(flag_mobile, flag_phone, flag_*)
-appli_inter <- subset(appli_inter, select = -c(22, 21, 20, 19))
+appli_inter <- subset(appli_inter, select = -c(2,21,22,23,24))
+appli_inter <- subset(appli_inter, select = -c(7,8))
 
-temp <- dplyr::distinct(appli_inter, ID, STATUS)
+appli_inter %>% head(10)
+
+appli_inter <- appli_inter %>% distinct(ID, .keep_all = TRUE)
+appli_inter %>% head(10)
 
 # no debt clients
-dim(temp[temp$STATUS == 0,]) # (36456, 2)
-
-# debt clients
-dim(temp[temp$STATUS == 1,]) # (4291, 2)
-
-# visualization of the amount of each class
-status <- c("No Debt", "Debt")
-status
-values <- c(dim(temp[temp$STATUS == 0,])[1], dim(temp[temp$STATUS == 1,])[1])
-values
-sm_df <- data.frame(status, values)
-sm_df
-viz <- ggplot(sm_df, aes(y=values, x=status, fill=status)) + geom_bar(stat="identity")
-viz
-# ** comments : the data set is imbalanced but we still have more than 4000 data to analyze debt clients
+dim(appli_inter[appli_inter$STATUS == 0,]) # (36290, 2)
 
 # we want to understand what make some clients better on their finance management than others
 
-# 1. first let us see if clustering is better on those data
-ncol(appli_inter)
-head(appli_inter)
-
-sapply(appli_inter, function(x) sum(is.na(x)))
-
+# first let us see if clustering is better on those data
 for (i in 1:5){
-  clf <- kmeans(appli_inter[c(11,12,18,20)], 2)
+  clf <- kmeans(appli_inter[c(10,11,16,17,19)], 2)
   print(clf)
-  plot(appli_inter[c(3,12)], col=clf$cluster)
+  plot(appli_inter[c(10,11)], col=clf$cluster)
 }
 
-# the clustering is still mixed
+# the clusters are still mixed
 
-# let us take a look again to our data
-appli_inter2 <- subset(appli_inter, select = -c(2,4,5,6,7))
-colnames(appli_inter2)
-appli_inter2 <- dplyr::distinct(appli_inter2)
-head(appli_inter2, 50)
+unique(appli_inter$OCCUPATION_TYPE)
 
-# we observe that there are duplicates in the data
-# and we'll delete them because they are a huge source of bias
-appli_inter2 <- appli_inter2[!duplicated(appli_inter2$ID), ]
-values <- c(dim(appli_inter2[appli_inter2$STATUS == 0,])[1], dim(appli_inter2[appli_inter2$STATUS == 1,])[1])
-values
+# collect the "low" occupation types : those are the persons we're interested on
+occupations = c("Core staff","Security staff", "Waiters/barmen staff", "Cleaning staff", "Laborers", "Cooking staff", "Low-skill Laborers", "Drivers")
+
+# we have 14087 persons belonging to this category
+dim(appli_inter[appli_inter$OCCUPATION_TYPE %in% occupations,])
+
+# among those 14087 persons, 14019 are "good" clients; which is really interesting
+dim(appli_inter[appli_inter$OCCUPATION_TYPE %in% occupations & appli_inter$nb_zeros > appli_inter$nb_ones,])
+appli_inter_w <- appli_inter[appli_inter$OCCUPATION_TYPE %in% occupations,]
+colnames(appli_inter_w)
+dim(appli_inter_w)
+
+# let us take only our rows of interest
+X <- subset(appli_inter_w, select=-c(1,2,3,4,5,6))
+dim(X)
+y <- as.factor(ifelse(appli_inter_w$nb_ones >= appli_inter_w$nb_zeros, 1, 0))
+length(y)
+describe(X)
+
+# *********** Random Forest ****************** #
+
+# In order to know which personal information to rely on
+# to try to explain the status of each category, we'll use
+# random forest to know the important variables
+
+# ** distribution of status
+colnames(appli_inter)
+no_debt <- length(class[class==0])
+debt <- length(class[class==1])
+status <- c("No debt", "Debt")
+values <- c(no_debt, debt)
 sm_df <- data.frame(status, values)
 sm_df
-viz <- ggplot(sm_df, aes(y=values, x=status, fill=status)) + geom_bar(stat="identity")
-viz
+ggplot(sm_df, aes(x = status, y = values, fill=status)) + geom_bar(stat = "identity")
 
-# now the data set is really imbalanced
+# highly imbalanced
 
-# 2. Decision tree
-# Decision Trees are white-box in machine learning
-# We'll build a decision tree to have a first intuition of how
-# we should go
-# Also, decision tree well handle imbalanced dataset
+# before diving in the forest, we noticed that we have a lot of categorical data
+# we then need to make dummy variables
 
-n <- nrow(appli_inter2)
-set.seed(2568)
-train <- sort(sample(1:n, floor(n/2)))
-appli_inter2.train <- appli_inter2[train, -c(1,2)]
-dim(appli_inter2.train)
-head(appli_inter2.train)
-appli_inter2.test <- appli_inter2[-train, -c(1,2)]
-head(appli_inter2.test)
-dim(appli_inter2.test)
-head(appli_inter2.test)
-print(dim(appli_inter2.train[appli_inter2.train$STATUS == 1, ]))
+# set ids as rownames
+rownames(X) <- appli_inter_w$ID
+head(X)
+X <- dummy_cols(X, remove_selected_columns = TRUE)
 
-# decision tree on the learning set
-help(rpart)
-class <- as.matrix(appli_inter2[2])
-appli_inter2.rp <- rpart(class ~ .,
-                 data = appli_inter2[c(3,4,5,14,6)],
-                 subset = train,
-                 method = "class", # class method is used for classification 
-                 parms = list(split = "information"),
-                 maxsurrogate = 0,
-                 cp = 0,
-                 minsplit = 5, # minimum number of data to split
-                 minbucket = 2) # minimum number of observations in any terminal node
+X.sample <- X[sample(nrow(X)),]
 
-X11(width=10, height = 10)
-plot(appli_inter2.rp,
-     uniform = TRUE,
-     compress = TRUE,
-     margin = .2)
-text(appli_inter2.rp,
-     use.n = TRUE,
-     all = TRUE,
-     fancy = TRUE)
-colnames(appli_inter2)
+# collect covariate and pseudo-covariate matrices
+appli_inter.pseudo <- data.frame(cbind(X, X.sample, y))
+p <- ncol(X)
 
-# _______________________________________________________________________________________________________________________________________________________________________________
-
-# 7. compute the denominator
-# count how many users opened the account on each month
-# will help us compute the due rate after
-denominator <- aggregate(table_window$opening_month, by=list(table_window$opening_month), FUN=length)
-denominator[1:5,]
-denominator <- denominator %>% rename_at("Group.1" , ~"opening_month")
-denominator <- denominator %>% rename_at("x" , ~"sum")
-colnames(denominator)
-
-# 8. compute the vintage table
-# now we'll see the due rate per month and at some discrete periods
-vintage <- aggregate(credits$month_on_book, 
-                     by=list(credits$month_on_book, credits$opening_month), FUN=length)
-vintage <- vintage %>% rename_at("Group.2", ~"opening_month")
-vintage <- vintage %>% rename_at("Group.1", ~"month_on_book")
-vintage[1:5,]
-vintage <- left_join(vintage, denominator, by="opening_month")
-vintage[1:5,]
-
-# delete sum.x
-vintage <- vintage %>% select(-x)
-colnames(vintage)
-dim(vintage)
-dim(vintage)[1]
-vintage$due_count <- rep(0, dim(vintage)[1])
-vintage[1:5,]
-
-# compute the due over months
-# on each month
-for(i in -60:0){
-  l = list()
-  # for each month on each book
-  for (j in 0:60){
-    # take the cards which are due
-    due <- credits[credits$STATUS == 1 & credits$month_on_book == j &
-               credits$opening_month  == i,"ID"]
-    l <- append(l, list(due))
-    vintage[(vintage$month_on_book == j) & (vintage$opening_month) == i, "due_count"] <- length(unique(l))
-  }
+# parallelize computation for random forest
+VIMs.unb <- function(k) {
+  set.seed(k)
+  appli_inter2.sample <- X[sample(nrow(X)),]
+  appli_inter2.pseudo <- data.frame(cbind(X, appli_inter2.sample,y))
+  appli_inter2.rf <- randomForest(y ~ ., data=appli_inter2.pseudo, ntree=500)
+  VIMs <- importance(appli_inter2.rf, type=2)
+  VIMs[1:p,] - VIMs[(p+1):(2*p),] 
 }
 
-vintage$rate <- vintage$due_count / vintage$sum
-vintage[1:5,]
+sfInit(parallel = TRUE, cpus=3, type="SOCK")
+sfLibrary(randomForest)
+sfExport("X", "y", "p")
+VIMs.list <- sfLapply(x=1:50, VIMs.unb)
+sfStop()
 
-# ********** Visualization
-colnames(vintage)
+VIMs <- t(matrix(unlist(VIMs.list),p))
+GINI.unb <- apply(VIMs, 2, mean)
 
-# a. Put the matrix on the wide form
-vintage_wide <- vintage %>% select(-one_of('sum', 'due_count'))
-vintage_wide <- pivot_wider(vintage_wide,
-                            names_from = "month_on_book",
-                            values_from = "rate")
-print(vintage_wide, n=60)
-vintage_wide[1:60, 50:60]
+# visualization
+idx <- order(GINI.unb, decreasing = T)
+idx
+Xs <- X[, idx[1:10]]
+Xs
+colnames(X)
+vm <- c(VIMs[,idx])
+grp <- c(t(matrix(rep(1:ncol(VIMs), nrow(VIMs)), ncol(VIMs))))
+dt <- data.frame(vm, grp=factor(grp))
+ggplot(dt, aes(grp, vm)) + geom_boxplot(outlier.size = 0) +
+  scale_x_discrete(breaks=c(1,100,200,300,400,p), name="")+
+  scale_y_continuous(name="GINI VIM corrected") +
+  geom_hline(yintercept = 0, colour="red", lty=2, lwd=1)+
+  theme(text = element_text(size=24))
 
-l <- list()
-for (col in colnames(vintage_wide[2:62])){
-  l <- c(l,vintage_wide[[col]])
-}
-print(length(l))
+appli_inter_imp <- X[, idx[1:12]]
+save(appli_inter_imp, file="important_covariates.RData")
 
-l <- rapply(l, function(x) ifelse(is.na(x),0,x))
+# According to the analysis, the most important variables
+# are : Pensioner, Security staff, Low-skill Laborers
 
-temp <- rep(0, nrow(vintage_wide))
-print(length(temp))
-for (col in c(1:60)){
-  print(col)
-  temp <- c(temp,
-            rep(col, nrow(vintage_wide)))
-  print(length(temp))
-}
-print(length(temp))
+# And it turns out that their credit card status is linked to their income,
+# the number of days employed, their marital status and also their age
 
-# b. reshape the matrix for ggplot
-df_resh <- data.table(
-  month_on_book = c(0:60),
-  cumul_rate = l,
-  group = temp
-)
-length(vintage_wide[["0"]])
+# let us take a look to those datas
+appli_inter_imp[appli_inter_imp$AMT_INCOME_TOTAL == 
+                  max(appli_inter_imp$AMT_INCOME_TOTAL),]
+appli_inter_imp[appli_inter_imp$AMT_INCOME_TOTAL == 
+                  min(appli_inter_imp$AMT_INCOME_TOTAL),]
+appli_inter_imp[appli_inter_imp$DAYS_BIRTH == 
+                  min(appli_inter_imp$DAYS_BIRTH),]
+appli_inter_imp[appli_inter_imp$DAYS_BIRTH == 
+                  max(appli_inter_imp$DAYS_BIRTH),]
+appli_inter[appli_inter$AMT_INCOME_TOTAL == 
+                  min(appli_inter$AMT_INCOME_TOTAL),]
 
-df_resh[1:5,]
+# exploring the data shows that those variables have a reverse impact
+# as pensioner, security staff, status singe are set to 0
+# means that we should be more attracted by people who don't belong
+# to those categories
+# Moreover, older people have a better money management
 
-# c. Plottiiiiiiing
-X11(width=10, height = 10 )
-my_plot <- ggplot(df_resh, aes(month_on_book, cumul_rate)) + geom_line(aes(colour=group)) +
-  scale_color_viridis() + theme(legend.position = "top") + 
-  labs(title = "Cumulative % of bad customers(>60 days past due)")
-my_plot
+# ** Modeling
+# Because we mostly have categorical variables, we're going to use random 
+# forest for modeling
+appli_inter2.ind <- data.frame(appli_inter_imp, y)
+set.seed(10)
+# training indices
+index <- sample(1:nrow(appli_inter2.ind), 4500)
+train <- appli_inter2.ind[index,]
+test <- appli_inter2.ind[-index,]
+clusters <- parallel::makeCluster(spec=3, type="PSOCK")
+registerDoParallel(clusters)
 
-ratios <- list()
-for (i in c(0:60)){
-  ratio = length(table_window[table_window$window < i]) / length(unique(table_window$ID))
-  ratios[[length(ratios)+1]] <- ratio
-}
-ratios
-plot(c(0:60), ratios)
+# parameters for train function
+param_train <- trainControl(method="repeatedcv", number = 5, repeats = 5)
 
-temp <- dplyr::intersect(my_data$ID, credits$ID)
-length(temp)
+# tune our model
+fit_rf <- train(y ~ .,
+                data=train, 
+                method = "rf",
+                metric = "Accuracy",
+                tuneGrid = expand.grid(.mtry=1:6),
+                trControl = param_train,
+                ntree = 500)
+stopCluster(clusters)
+
+print(fit_rf)
+plot(fit_rf)
+colnames(test)
+colnames(train)
+
+# prediction
+y_rf <- predict(fit_rf$finalModel, newdata = test, type="class")
+y_rf
+
+# ________ THIS IS THE END _____________________ #
